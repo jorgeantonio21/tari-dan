@@ -26,9 +26,11 @@ mod comms;
 mod config;
 mod dan_node;
 mod default_service_specification;
+mod epoch_manager;
 mod grpc;
 mod json_rpc;
 mod p2p;
+mod template_manager;
 
 use std::{process, sync::Arc};
 
@@ -48,12 +50,22 @@ use tari_comms::{
     NodeIdentity,
 };
 use tari_comms_dht::Dht;
-use tari_dan_core::services::{mempool::service::MempoolServiceHandle, ConcreteAssetProxy, ServiceSpecification};
-use tari_dan_storage_sqlite::SqliteDbFactory;
+use tari_dan_core::{
+    services::{
+        mempool::service::MempoolServiceHandle,
+        ConcreteAcceptanceManager,
+        ConcreteAssetProcessor,
+        ConcreteAssetProxy,
+        ServiceSpecification,
+    },
+    storage::{global::GlobalDb, DbFactory},
+};
 use tari_p2p::comms_connector::SubscriptionFactory;
 use tari_service_framework::ServiceHandles;
+use tari_dan_storage_sqlite::{global::SqliteGlobalDbBackendAdapter, SqliteDbFactory};
 use tari_shutdown::{Shutdown, ShutdownSignal};
 use tari_validator_node_grpc::rpc::validator_node_server::ValidatorNodeServer;
+use template_manager::TemplateManager;
 use tokio::{runtime, runtime::Runtime, task};
 use tonic::transport::Server;
 
@@ -62,7 +74,11 @@ use crate::{
     config::{ApplicationConfig, ValidatorNodeConfig},
     dan_node::DanNode,
     default_service_specification::DefaultServiceSpecification,
-    grpc::{services::base_node_client::GrpcBaseNodeClient, validator_node_grpc_server::ValidatorNodeGrpcServer},
+    epoch_manager::EpochManager,
+    grpc::{
+        services::{base_node_client::GrpcBaseNodeClient, wallet_client::GrpcWalletClient},
+        validator_node_grpc_server::ValidatorNodeGrpcServer,
+    },
     json_rpc::run_json_rpc,
     p2p::services::rpc_client::TariCommsValidatorNodeClientFactory,
 };
@@ -122,7 +138,7 @@ async fn run_node(config: &ApplicationConfig) -> Result<(), ExitError> {
         node_identity.node_id()
     );
     // fs::create_dir_all(&global.peer_db_path).map_err(|err| ExitError::new(ExitCode::ConfigError, err))?;
-    let (handles, subscription_factory) = comms::build_service_and_comms_stack(
+    let (handles, _subscription_factory) = comms::build_service_and_comms_stack(
         config,
         shutdown.to_signal(),
         node_identity.clone(),
@@ -139,8 +155,16 @@ async fn run_node(config: &ApplicationConfig) -> Result<(), ExitError> {
         mempool_service.clone(),
         db_factory.clone(),
     );
-    let grpc_server: ValidatorNodeGrpcServer<DefaultServiceSpecification> =
-        ValidatorNodeGrpcServer::new(node_identity.as_ref().clone(), db_factory.clone(), asset_proxy);
+    let wallet_client = GrpcWalletClient::new(config.validator_node.wallet_grpc_address);
+    let _acceptance_manager = ConcreteAcceptanceManager::new(wallet_client.clone(), base_node_client);
+    let grpc_server: ValidatorNodeGrpcServer<DefaultServiceSpecification> = ValidatorNodeGrpcServer::new(
+        node_identity.as_ref().clone(),
+        db_factory.clone(),
+        asset_processor,
+        asset_proxy,
+    );
+    let epoch_manager = Arc::new(EpochManager::new());
+    let template_manager = Arc::new(TemplateManager::new());
 
     // Run the gRPC API
     if let Some(address) = config.validator_node.grpc_address.clone() {
@@ -161,11 +185,14 @@ async fn run_node(config: &ApplicationConfig) -> Result<(), ExitError> {
     run_dan_node(
         shutdown.to_signal(),
         config.validator_node.clone(),
-        mempool_service,
-        db_factory,
-        handles,
-        subscription_factory,
+        // mempool_service,
+        // db_factory,
+        // handles,
+        // subscription_factory,
         node_identity,
+        global_db,
+        epoch_manager.clone(),
+        template_manager.clone(),
     )
     .await?;
 
@@ -183,19 +210,22 @@ fn build_runtime() -> Result<Runtime, ExitError> {
 async fn run_dan_node(
     shutdown_signal: ShutdownSignal,
     config: ValidatorNodeConfig,
-    mempool_service: MempoolServiceHandle,
-    db_factory: SqliteDbFactory,
-    handles: ServiceHandles,
-    subscription_factory: Arc<SubscriptionFactory>,
+    // mempool_service: MempoolServiceHandle,
+    // db_factory: SqliteDbFactory,
+    // handles: ServiceHandles,
+    // subscription_factory: Arc<SubscriptionFactory>,
     node_identity: Arc<NodeIdentity>,
+    global_db: GlobalDb<SqliteGlobalDbBackendAdapter>,
+    epoch_manager: Arc<EpochManager>,
+    template_manager: Arc<TemplateManager>,
 ) -> Result<(), ExitError> {
-    let node = DanNode::new(config, node_identity);
+    let node = DanNode::new(config, node_identity, global_db, epoch_manager, template_manager);
     node.start(
         shutdown_signal,
-        mempool_service,
-        db_factory,
-        handles,
-        subscription_factory,
+        // mempool_service,
+        // db_factory,
+        // handles,
+        // subscription_factory,
     )
     .await
 }

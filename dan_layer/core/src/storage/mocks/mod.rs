@@ -27,7 +27,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
-
+use crate::storage::chain::DbTemplate;
 use tari_common_types::types::FixedHash;
 use tari_dan_engine::state::{mocks::state_db::MockStateDbBackupAdapter, StateDb};
 
@@ -102,10 +102,11 @@ impl DbFactory for MockDbFactory {
 
 #[derive(Debug, Default)]
 pub(self) struct MemoryChainDb {
-    pub _nodes: MemoryDbTable<DbNode>,
-    pub _instructions: MemoryDbTable<DbInstruction>,
-    pub _prepare_qc: MemoryDbTable<DbQc>,
-    pub _locked_qc: MemoryDbTable<DbQc>,
+    pub nodes: MemoryDbTable<DbNode>,
+    pub instructions: MemoryDbTable<DbInstruction>,
+    pub templates: MemoryDbTable<DbTemplate>,
+    pub prepare_qc: MemoryDbTable<DbQc>,
+    pub locked_qc: MemoryDbTable<DbQc>,
     pub metadata: MemoryDbTable<(ChainDbMetadataKey, Vec<u8>)>,
 }
 
