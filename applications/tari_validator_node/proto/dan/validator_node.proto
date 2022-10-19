@@ -24,18 +24,12 @@ syntax = "proto3";
 package tari.dan.validator_node;
 
 import "common.proto";
+import "consensus.proto";
+import "network.proto";
 
 service ValidatorNode {
-  rpc GetTokenData(GetTokenDataRequest) returns (GetTokenDataResponse);
   rpc SubmitTransaction(SubmitTransactionRequest) returns (SubmitTransactionResponse);
 }
-
-message GetTokenDataRequest {
-  bytes asset_pub_key = 1;
-  bytes unique_id = 2;
-}
-
-message GetTokenDataResponse {}
 
 enum Status {
   Accepted = 0;
@@ -68,15 +62,13 @@ message InvokeMethodResponse {
   Status status = 2;
 }
 
-
-
 message GetSidechainStateRequest {
   bytes contract_id = 1;
 }
 
 message GetSidechainStateResponse {
   oneof state {
-    string schema  = 1;
+    string schema = 1;
     KeyValue key_value = 2;
   }
 }
@@ -112,53 +104,32 @@ message GetTipNodeResponse {
   tari.dan.common.Node tip_node = 1;
 }
 
-message GetIdentityRequest { }
+message GetIdentityRequest {}
 
 message GetIdentityResponse {
-    bytes public_key = 1;
-    string public_address = 2;
-    bytes node_id = 3;
+  bytes public_key = 1;
+  string public_address = 2;
+  bytes node_id = 3;
 }
 
-message Arg {
-  enum ArgType {
-      LITERAL = 0;
-      FROM_WORKSPACE = 1;
-  }
-  ArgType arg_type = 1;
-  bytes data = 2;
-}
 
-message Instruction {
-  enum InstructionType {
-      FUNCTION = 0;
-      METHOD = 1;
-      PUT_OUTPUT_IN_WORKSPACE = 2;
-  }
-  InstructionType instruction_type = 1;
 
-  // common fields
-  bytes package_address = 2;
-  repeated Arg args = 3;
 
-  // function only
-  string template = 4;
-  string function = 5;
-
-  // method only
-  bytes component_address = 6;
-  string method = 7;
-
-  // PutLastInstructionOutputOnWorkspace
-  bytes key = 8;
-}
 
 message SubmitTransactionRequest{
   tari.dan.common.Transaction transaction = 1;
 }
 
-
 message SubmitTransactionResponse {
   string status = 1;
   bytes result = 2;
+}
+
+message DanMessage {
+  oneof message {
+    tari.dan.consensus.HotStuffMessage hot_stuff = 1;
+    tari.dan.consensus.VoteMessage vote = 2;
+    tari.dan.common.Transaction new_transaction = 3;
+    tari.dan.network.NetworkAnnounce network_announce = 4;
+  }
 }

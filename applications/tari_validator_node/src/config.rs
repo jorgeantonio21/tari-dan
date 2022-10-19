@@ -23,12 +23,13 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use config::Config;
 use serde::{Deserialize, Serialize};
 use tari_common::{
-    configuration::{CommonConfig, Network},
+    configuration::{serializers, CommonConfig, Network},
     ConfigurationError,
     DefaultConfigLoader,
     SubConfigPath,
@@ -59,8 +60,10 @@ impl ApplicationConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ValidatorNodeConfig {
     override_from: Option<String>,
+    pub shard_key_file: PathBuf,
     /// A path to the file that stores your node identity and secret key
     pub identity_file: PathBuf,
     /// A path to the file that stores the tor hidden service private key, if using the tor transport
@@ -76,8 +79,14 @@ pub struct ValidatorNodeConfig {
     /// If set to false, there will be no base layer scanning at all
     pub scan_base_layer: bool,
     /// How often do we want to scan the base layer for changes
+<<<<<<< HEAD
     pub base_layer_scanning_interval_in_seconds: u64,
     /// If set to false, there will be no scanning at all
+=======
+    #[serde(with = "serializers::seconds")]
+    pub base_layer_scanning_interval: Duration,
+    /// If set to true, it will constantly scan for new assets on the base layer
+>>>>>>> development
     pub scan_for_assets: bool,
     /// How often do we want to scan the base layer for changes
     pub new_asset_scanning_interval: u64,
@@ -99,10 +108,17 @@ pub struct ValidatorNodeConfig {
     pub grpc_address: Option<Multiaddr>,
     /// JSON-RPC address of the validator node  application
     pub json_rpc_address: Option<SocketAddr>,
+    /// The address of the HTTP UI
+    pub http_ui_address: Option<SocketAddr>,
+    /// The node will re-register each epoch
+    pub auto_register: bool,
 }
 
 impl ValidatorNodeConfig {
     pub fn set_base_path<P: AsRef<Path>>(&mut self, base_path: P) {
+        if !self.shard_key_file.is_absolute() {
+            self.shard_key_file = base_path.as_ref().join(&self.shard_key_file);
+        }
         if !self.identity_file.is_absolute() {
             self.identity_file = base_path.as_ref().join(&self.identity_file);
         }
@@ -125,25 +141,35 @@ impl Default for ValidatorNodeConfig {
 
         Self {
             override_from: None,
+            shard_key_file: PathBuf::from("shard_key.json"),
             identity_file: PathBuf::from("validator_node_id.json"),
             tor_identity_file: PathBuf::from("validator_node_tor_id.json"),
             public_address: None,
-            phase_timeout: 30,
             base_node_grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 18142),
             wallet_grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 18143),
             scan_base_layer: true,
+<<<<<<< HEAD
             base_layer_scanning_interval_in_seconds: 10,
             scan_for_assets: true,
+=======
+            base_layer_scanning_interval: Duration::from_secs(10),
+            data_dir: PathBuf::from("data/validator_node"),
+            p2p,
+            grpc_address: Some("/ip4/127.0.0.1/tcp/18144".parse().unwrap()),
+            json_rpc_address: Some("127.0.0.1:18200".parse().unwrap()),
+            http_ui_address: Some("127.0.0.1:5000".parse().unwrap()),
+            auto_register: false,
+
+            // TODO: Deprecated - need to update tari_common to remove these
+            phase_timeout: 30,
+            scan_for_assets: false,
+>>>>>>> development
             new_asset_scanning_interval: 10,
             assets_allow_list: None,
-            data_dir: PathBuf::from("data/validator_node"),
             constitution_auto_accept: false,
             constitution_management_confirmation_time: 20,
             constitution_management_polling_interval: 120,
             constitution_management_polling_interval_in_seconds: 60,
-            p2p,
-            grpc_address: Some("/ip4/127.0.0.1/tcp/18144".parse().unwrap()),
-            json_rpc_address: Some("127.0.0.1:18145".parse().unwrap()),
         }
     }
 }

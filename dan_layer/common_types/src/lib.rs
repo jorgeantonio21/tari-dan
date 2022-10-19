@@ -4,21 +4,26 @@
 pub mod proto;
 pub mod storage;
 
+mod epoch;
+pub mod optional;
+pub mod serde_with;
 mod template_id;
 
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    fmt,
+    fmt::{Display, Formatter},
+};
 
+use ::serde::{Deserialize, Serialize};
 use borsh::{BorshDeserialize, BorshSerialize};
-use serde::{Deserialize, Deserializer};
-use tari_common_types::types::FixedHash;
+pub use epoch::Epoch;
+use tari_common_types::types::{FixedHash, FixedHashSizeError};
 use tari_utilities::{byte_array::ByteArray, hex::Hex};
 pub use template_id::TemplateId;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub struct ObjectId(#[serde(deserialize_with = "deserialize_fixed_hash_from_hex")] pub [u8; 32]);
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize)]
-pub struct ShardId(#[serde(deserialize_with = "deserialize_fixed_hash_from_hex")] pub [u8; 32]);
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ShardId(#[serde(with = "serde_with::hex")] pub [u8; 32]);
 
 impl ShardId {
     pub fn to_le_bytes(&self) -> &[u8] {
@@ -31,8 +36,44 @@ impl ShardId {
         Self(v)
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FixedHashSizeError> {
+        FixedHash::try_from(bytes).map(Self::new)
+    }
+
     pub fn zero() -> Self {
         Self::new(FixedHash::default())
+    }
+}
+
+impl From<[u8; 32]> for ShardId {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<ShardId> for Vec<u8> {
+    fn from(s: ShardId) -> Self {
+        s.as_bytes().to_vec()
+    }
+}
+
+impl TryFrom<Vec<u8>> for ShardId {
+    type Error = FixedHashSizeError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        Self::from_bytes(&value)
+    }
+}
+
+impl TryFrom<&[u8]> for ShardId {
+    type Error = FixedHashSizeError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(value)
     }
 }
 
@@ -48,20 +89,26 @@ impl Ord for ShardId {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+impl Display for ShardId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.to_hex())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum SubstateChange {
     Create,
     Destroy,
 }
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Deserialize, Serialize)]
 pub enum SubstateState {
     DoesNotExist,
-    Exists { created_by: PayloadId, data: Vec<u8> },
-    Destroyed { deleted_by: PayloadId },
+    Up { created_by: PayloadId, data: Vec<u8> },
+    Down { deleted_by: PayloadId },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ObjectClaim {}
 
 impl ObjectClaim {
@@ -70,9 +117,9 @@ impl ObjectClaim {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize, Deserialize, Serialize)]
 pub struct PayloadId {
-    #[serde(deserialize_with = "deserialize_fixed_hash_from_hex")]
+    #[serde(with = "serde_with::hex")]
     id: [u8; 32],
 }
 
@@ -90,12 +137,26 @@ impl PayloadId {
     pub fn as_slice(&self) -> &[u8] {
         self.id.as_slice()
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_slice()
+    }
+
+    pub fn into_array(self) -> [u8; 32] {
+        self.id
+    }
 }
 
-/// Use a serde deserializer to serialize the hex string of the given object.
-pub fn deserialize_fixed_hash_from_hex<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-where D: Deserializer<'de> {
-    let hex = <String as Deserialize>::deserialize(deserializer)?;
-    let hash = <[u8; 32] as Hex>::from_hex(hex.as_str()).map_err(serde::de::Error::custom)?;
-    Ok(hash)
+impl Display for PayloadId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.id.to_hex())
+    }
+}
+
+impl TryFrom<Vec<u8>> for PayloadId {
+    type Error = FixedHashSizeError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        Ok(PayloadId::new(FixedHash::try_from(value.as_slice())?))
+    }
 }

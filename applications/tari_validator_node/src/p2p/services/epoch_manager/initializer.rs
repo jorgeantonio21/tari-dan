@@ -20,23 +20,24 @@
 //  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use async_trait::async_trait;
-use tari_service_framework::{ServiceInitializationError, ServiceInitializer, ServiceInitializerContext};
-use tokio::sync::mpsc::channel;
+use tari_comms::types::CommsPublicKey;
+use tari_dan_storage_sqlite::SqliteDbFactory;
+use tari_shutdown::ShutdownSignal;
+use tokio::sync::mpsc;
 
-use crate::p2p::services::epoch_manager::{epoch_manager_service::EpochManagerService, handle::EpochManagerHandle};
+use crate::{
+    grpc::services::base_node_client::GrpcBaseNodeClient,
+    p2p::services::epoch_manager::{epoch_manager_service::EpochManagerService, handle::EpochManagerHandle},
+};
 
-pub struct EpochManagerInitializer {}
-
-#[async_trait]
-impl ServiceInitializer for EpochManagerInitializer {
-    async fn initialize(&mut self, context: ServiceInitializerContext) -> Result<(), ServiceInitializationError> {
-        let (tx_request, rx_request) = channel(10);
-        let handle = EpochManagerHandle::new(tx_request);
-        context.register_handle(handle);
-        let shutdown = context.get_shutdown_signal();
-        context.spawn_when_ready(|_handles| EpochManagerService::spawn(rx_request, shutdown));
-
-        Ok(())
-    }
+pub fn spawn(
+    db_factory: SqliteDbFactory,
+    base_node_client: GrpcBaseNodeClient,
+    id: CommsPublicKey,
+    shutdown: ShutdownSignal,
+) -> EpochManagerHandle {
+    let (tx_request, rx_request) = mpsc::channel(10);
+    let handle = EpochManagerHandle::new(tx_request);
+    EpochManagerService::spawn(id, rx_request, shutdown, db_factory, base_node_client);
+    handle
 }

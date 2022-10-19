@@ -20,9 +20,8 @@
 //  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::sync::Arc;
-
 use tari_common::exit_codes::ExitError;
+<<<<<<< HEAD
 use tari_comms::NodeIdentity;
 use tari_dan_core::{
     services::mempool::service::MempoolServiceHandle,
@@ -115,6 +114,26 @@ impl DanNode {
         // .start()
         // .await
         // .map_err(|err| ExitError::new(ExitCode::DigitalAssetError, err))?;
+=======
+use tari_shutdown::ShutdownSignal;
+
+use crate::{p2p::services::networking::NetworkingService, Services};
+
+pub struct DanNode {
+    services: Services,
+}
+
+impl DanNode {
+    pub fn new(services: Services) -> Self {
+        Self { services }
+    }
+
+    pub async fn start(mut self, mut shutdown: ShutdownSignal) -> Result<(), ExitError> {
+        self.services.networking.announce().await?;
+
+        // Wait until killed
+        shutdown.wait().await;
+>>>>>>> development
 
         Ok(())
     }

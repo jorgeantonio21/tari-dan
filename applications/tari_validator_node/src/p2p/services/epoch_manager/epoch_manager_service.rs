@@ -20,20 +20,29 @@
 //  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use tari_dan_core::{models::Epoch, services::epoch_manager::EpochManager};
+use tari_comms::types::CommsPublicKey;
+use tari_dan_common_types::{Epoch, ShardId};
+use tari_dan_core::{
+    models::Committee,
+    services::epoch_manager::{EpochManagerError, ShardCommitteeAllocation},
+};
+use tari_dan_storage_sqlite::SqliteDbFactory;
 use tari_shutdown::ShutdownSignal;
 use tokio::{
     sync::{mpsc::Receiver, oneshot},
     task::JoinHandle,
 };
 
-use crate::p2p::services::epoch_manager::base_layer_epoch_manager::BaseLayerEpochManager;
+use crate::{
+    grpc::services::base_node_client::GrpcBaseNodeClient,
+    p2p::services::epoch_manager::base_layer_epoch_manager::BaseLayerEpochManager,
+};
 // const LOG_TARGET: &str = "tari::validator_node::epoch_manager";
 
 pub struct EpochManagerService {
     rx_request: Receiver<(
         EpochManagerRequest,
-        oneshot::Sender<Result<EpochManagerResponse, String>>,
+        oneshot::Sender<Result<EpochManagerResponse, EpochManagerError>>,
     )>,
     inner: BaseLayerEpochManager,
 }
@@ -41,31 +50,71 @@ pub struct EpochManagerService {
 #[derive(Debug, Clone)]
 pub enum EpochManagerRequest {
     CurrentEpoch,
+    UpdateEpoch {
+        height: u64,
+    },
+    IsEpochValid {
+        epoch: Epoch,
+    },
+    GetCommittees {
+        epoch: Epoch,
+        shards: Vec<ShardId>,
+    },
+    GetCommittee {
+        epoch: Epoch,
+        shard: ShardId,
+    },
+    FilterToLocalShards {
+        epoch: Epoch,
+        for_addr: CommsPublicKey,
+        available_shards: Vec<ShardId>,
+    },
 }
 
 pub enum EpochManagerResponse {
-    CurrentEpoch { epoch: Epoch },
+    CurrentEpoch {
+        epoch: Epoch,
+    },
+    UpdateEpoch,
+    IsEpochValid {
+        is_valid: bool,
+    },
+    GetCommittees {
+        committees: Vec<ShardCommitteeAllocation<CommsPublicKey>>,
+    },
+    GetCommittee {
+        committee: Committee<CommsPublicKey>,
+    },
+    FilterToLocalShards {
+        shards: Vec<ShardId>,
+    },
 }
 
 impl EpochManagerService {
     pub fn spawn(
+        id: CommsPublicKey,
         rx_request: Receiver<(
             EpochManagerRequest,
-            oneshot::Sender<Result<EpochManagerResponse, String>>,
+            oneshot::Sender<Result<EpochManagerResponse, EpochManagerError>>,
         )>,
         shutdown: ShutdownSignal,
-    ) -> JoinHandle<Result<(), String>> {
+        db_factory: SqliteDbFactory,
+        base_node_client: GrpcBaseNodeClient,
+    ) -> JoinHandle<Result<(), EpochManagerError>> {
         tokio::spawn(async move {
             EpochManagerService {
                 rx_request,
-                inner: BaseLayerEpochManager {},
+                inner: BaseLayerEpochManager::new(db_factory, base_node_client, id),
             }
             .run(shutdown)
             .await
         })
     }
 
-    pub async fn run(&mut self, mut shutdown: ShutdownSignal) -> Result<(), String> {
+    pub async fn run(&mut self, mut shutdown: ShutdownSignal) -> Result<(), EpochManagerError> {
+        // first, load initial state
+        self.inner.load_initial_state().await?;
+
         loop {
             tokio::select! {
                 Some((req, reply)) = self.rx_request.recv() => {
@@ -80,11 +129,35 @@ impl EpochManagerService {
         Ok(())
     }
 
-    async fn handle_request(&mut self, req: EpochManagerRequest) -> Result<EpochManagerResponse, String> {
+    async fn handle_request(&mut self, req: EpochManagerRequest) -> Result<EpochManagerResponse, EpochManagerError> {
         match req {
             EpochManagerRequest::CurrentEpoch => Ok(EpochManagerResponse::CurrentEpoch {
-                epoch: self.inner.current_epoch().await,
+                epoch: self.inner.current_epoch(),
             }),
+            EpochManagerRequest::UpdateEpoch { height } => {
+                self.inner.update_epoch(height).await?;
+                Ok(EpochManagerResponse::UpdateEpoch)
+            },
+            EpochManagerRequest::IsEpochValid { epoch } => {
+                let is_valid = self.inner.is_epoch_valid(epoch);
+                Ok(EpochManagerResponse::IsEpochValid { is_valid })
+            },
+            EpochManagerRequest::GetCommittees { epoch, shards } => {
+                let committees = self.inner.get_committees(epoch, &shards)?;
+                Ok(EpochManagerResponse::GetCommittees { committees })
+            },
+            EpochManagerRequest::GetCommittee { epoch, shard } => {
+                let committee = self.inner.get_committee(epoch, shard)?;
+                Ok(EpochManagerResponse::GetCommittee { committee })
+            },
+            EpochManagerRequest::FilterToLocalShards {
+                epoch,
+                for_addr,
+                available_shards,
+            } => {
+                let shards = self.inner.filter_to_local_shards(epoch, &for_addr, &available_shards)?;
+                Ok(EpochManagerResponse::FilterToLocalShards { shards })
+            },
         }
     }
 }

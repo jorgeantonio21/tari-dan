@@ -20,14 +20,22 @@
 // WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 // USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::{cmp::Ordering, convert::TryFrom, fmt::Debug, hash::Hash, ops::Add};
+use std::{
+    cmp::Ordering,
+    convert::{Infallible, TryFrom},
+    fmt::Debug,
+    hash::Hash,
+    ops::Add,
+};
+
+use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
 
 mod base_layer_metadata;
 mod base_layer_output;
 mod committee;
 pub mod domain_events;
 mod error;
-// mod hashing;
 mod hot_stuff_message;
 mod hot_stuff_tree_node;
 mod node;
@@ -36,6 +44,7 @@ mod quorum_certificate;
 mod sidechain_metadata;
 mod tari_dan_payload;
 mod tree_node_hash;
+mod validator_node;
 mod view;
 mod view_id;
 pub mod vote_message;
@@ -50,16 +59,21 @@ pub use node::Node;
 pub use payload::Payload;
 pub use quorum_certificate::{QuorumCertificate, QuorumDecision};
 pub use sidechain_metadata::SidechainMetadata;
-use tari_dan_common_types::{ObjectId, PayloadId, SubstateState};
+use tari_dan_common_types::{PayloadId, ShardId, SubstateState};
 pub use tari_dan_payload::{CheckpointData, TariDanPayload};
 pub use tree_node_hash::TreeNodeHash;
+pub use validator_node::ValidatorNode;
 pub use view::View;
 pub use view_id::ViewId;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct NodeHeight(pub u64);
 
 impl NodeHeight {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+
     fn to_le_bytes(self) -> [u8; 8] {
         self.0.to_le_bytes()
     }
@@ -79,18 +93,15 @@ impl PartialOrd for NodeHeight {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Epoch(pub u64);
-
-impl Epoch {
-    fn to_le_bytes(self) -> [u8; 8] {
-        self.0.to_le_bytes()
+impl From<u64> for NodeHeight {
+    fn from(height: u64) -> Self {
+        NodeHeight(height)
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ObjectPledge {
-    pub object_id: ObjectId,
+    pub shard_id: ShardId,
     pub current_state: SubstateState,
     pub pledged_to_payload: PayloadId,
     pub pledged_until: NodeHeight,
@@ -126,13 +137,6 @@ impl AsRef<[u8]> for TokenId {
 pub enum HotStuffMessageType {
     NewView,
     Generic,
-    // TODO: remove
-    Prepare,
-    PreCommit,
-    Commit,
-    Decide,
-    // Special type
-    Genesis,
 }
 
 impl Default for HotStuffMessageType {
@@ -144,13 +148,8 @@ impl Default for HotStuffMessageType {
 impl HotStuffMessageType {
     pub fn as_u8(&self) -> u8 {
         match self {
-            HotStuffMessageType::NewView => 1,
-            HotStuffMessageType::Prepare => 2,
-            HotStuffMessageType::PreCommit => 3,
-            HotStuffMessageType::Commit => 4,
-            HotStuffMessageType::Decide => 5,
-            HotStuffMessageType::Genesis => 255,
-            HotStuffMessageType::Generic => 102,
+            HotStuffMessageType::NewView => 0,
+            HotStuffMessageType::Generic => 1,
         }
     }
 }
@@ -160,14 +159,21 @@ impl TryFrom<u8> for HotStuffMessageType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(HotStuffMessageType::NewView),
-            2 => Ok(HotStuffMessageType::Prepare),
-            3 => Ok(HotStuffMessageType::PreCommit),
-            4 => Ok(HotStuffMessageType::Commit),
-            5 => Ok(HotStuffMessageType::Decide),
-            102 => Ok(HotStuffMessageType::Generic),
-            255 => Ok(HotStuffMessageType::Genesis),
+            0 => Ok(HotStuffMessageType::NewView),
+            1 => Ok(HotStuffMessageType::Generic),
             _ => Err("Not a value message type".to_string()),
+        }
+    }
+}
+
+impl TryFrom<i32> for HotStuffMessageType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(HotStuffMessageType::NewView),
+            1 => Ok(HotStuffMessageType::Generic),
+            _ => Err(anyhow!("Not a value message type")),
         }
     }
 }
@@ -202,16 +208,17 @@ pub enum ConsensusWorkerState {
     Idle,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ValidatorSignature {
     pub signer: Vec<u8>,
 }
 
 impl ValidatorSignature {
-    pub fn from_bytes(source: &[u8]) -> Self {
-        Self {
+    // TODO: implement from bytes with correct error
+    pub fn from_bytes(source: &[u8]) -> Result<Self, Infallible> {
+        Ok(Self {
             signer: Vec::from(source),
-        }
+        })
     }
 
     pub fn combine(&self, other: &ValidatorSignature) -> ValidatorSignature {
@@ -236,4 +243,11 @@ impl From<u64> for ChainHeight {
     fn from(v: u64) -> Self {
         ChainHeight(v)
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ShardVote {
+    pub shard_id: ShardId,
+    pub node_hash: TreeNodeHash,
+    pub pledges: Vec<ObjectPledge>,
 }

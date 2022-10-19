@@ -20,6 +20,7 @@
 //  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+<<<<<<< HEAD
 use std::{convert::TryInto, sync::Arc, time::Duration};
 
 use log::*;
@@ -41,12 +42,42 @@ use tokio::time;
 use crate::{
     epoch_manager::EpochManager,
     template_manager::{TemplateManager, TemplateMetadata},
+=======
+use std::convert::TryInto;
+
+use log::*;
+use tari_common_types::types::{FixedHash, FixedHashSizeError};
+use tari_core::transactions::transaction_components::{
+    CodeTemplateRegistration,
+    SideChainFeature,
+    ValidatorNodeRegistration,
+};
+use tari_crypto::tari_utilities::ByteArray;
+use tari_dan_common_types::optional::Optional;
+use tari_dan_core::{
+    models::BaseLayerMetadata,
+    services::{base_node_error::BaseNodeError, epoch_manager::EpochManagerError, BaseNodeClient, BlockInfo},
+    DigitalAssetError,
+};
+use tari_dan_storage::global::{GlobalDb, MetadataKey};
+use tari_dan_storage_sqlite::{error::SqliteStorageError, global::SqliteGlobalDbAdapter};
+use tari_shutdown::ShutdownSignal;
+use tari_template_lib::models::TemplateAddress;
+use tokio::{task, time};
+
+use crate::{
+    p2p::services::{
+        epoch_manager::handle::EpochManagerHandle,
+        template_manager::{TemplateManagerError, TemplateManagerHandle, TemplateRegistration},
+    },
+>>>>>>> development
     GrpcBaseNodeClient,
     ValidatorNodeConfig,
 };
 
 const LOG_TARGET: &str = "tari::validator_node::base_layer_scanner";
 
+<<<<<<< HEAD
 pub struct BaseLayerScanner {
     config: ValidatorNodeConfig,
     global_db: GlobalDb<SqliteGlobalDbBackendAdapter>,
@@ -55,16 +86,57 @@ pub struct BaseLayerScanner {
     base_node_client: GrpcBaseNodeClient,
     epoch_manager: Arc<EpochManager>,
     template_manager: Arc<TemplateManager>,
+=======
+pub fn spawn(
+    config: ValidatorNodeConfig,
+    global_db: GlobalDb<SqliteGlobalDbAdapter>,
+    base_node_client: GrpcBaseNodeClient,
+    epoch_manager: EpochManagerHandle,
+    template_manager: TemplateManagerHandle,
+    shutdown: ShutdownSignal,
+) {
+    task::spawn(async move {
+        let base_layer_scanner = BaseLayerScanner::new(
+            config,
+            global_db,
+            base_node_client,
+            epoch_manager,
+            template_manager,
+            shutdown,
+        );
+
+        if let Err(err) = base_layer_scanner.start().await {
+            error!(target: LOG_TARGET, "Base layer scanner failed to initialize: {}", err);
+        }
+    });
+}
+
+pub struct BaseLayerScanner {
+    config: ValidatorNodeConfig,
+    global_db: GlobalDb<SqliteGlobalDbAdapter>,
+    last_scanned_height: u64,
+    last_scanned_hash: Option<FixedHash>,
+    base_node_client: GrpcBaseNodeClient,
+    epoch_manager: EpochManagerHandle,
+    template_manager: TemplateManagerHandle,
+>>>>>>> development
     shutdown: ShutdownSignal,
 }
 
 impl BaseLayerScanner {
     pub fn new(
         config: ValidatorNodeConfig,
+<<<<<<< HEAD
         global_db: GlobalDb<SqliteGlobalDbBackendAdapter>,
         base_node_client: GrpcBaseNodeClient,
         epoch_manager: Arc<EpochManager>,
         template_manager: Arc<TemplateManager>,
+=======
+        global_db: GlobalDb<SqliteGlobalDbAdapter>,
+        base_node_client: GrpcBaseNodeClient,
+        epoch_manager: EpochManagerHandle,
+        template_manager: TemplateManagerHandle,
+>>>>>>> development
         shutdown: ShutdownSignal,
     ) -> Self {
         Self {
@@ -80,6 +152,7 @@ impl BaseLayerScanner {
     }
 
     pub async fn start(mut self) -> Result<(), BaseLayerScannerError> {
+<<<<<<< HEAD
         self.load_initial_state()?;
 
         if !self.config.scan_base_layer {
@@ -105,6 +178,30 @@ impl BaseLayerScanner {
             tokio::select! {
                 _ = time::sleep(Duration::from_secs(self.config.base_layer_scanning_interval_in_seconds)) => {},
                 _ = &mut self.shutdown => break
+=======
+        if !self.config.scan_base_layer {
+            info!(
+                target: LOG_TARGET,
+                "⚠️ scan_base_layer turned OFF. Base layer scanner is exiting."
+            );
+            return Ok(());
+        }
+
+        self.load_initial_state()?;
+        // Scan on startup
+        if let Err(err) = self.scan_blockchain().await {
+            error!(target: LOG_TARGET, "Base layer scanner failed with error: {}", err);
+        }
+
+        loop {
+            tokio::select! {
+                _ = time::sleep(self.config.base_layer_scanning_interval) => {
+                    if let Err(err) = self.scan_blockchain().await {
+                        error!(target: LOG_TARGET, "Base layer scanner failed with error: {}", err);
+                    }
+                },
+                _ = self.shutdown.wait() => break
+>>>>>>> development
             }
         }
 
@@ -114,6 +211,7 @@ impl BaseLayerScanner {
     fn load_initial_state(&mut self) -> Result<(), BaseLayerScannerError> {
         self.last_scanned_hash = None;
         self.last_scanned_height = 0;
+<<<<<<< HEAD
 
         self.last_scanned_hash = self
             .global_db
@@ -123,6 +221,17 @@ impl BaseLayerScanner {
         self.last_scanned_height = self
             .global_db
             .get_data(GlobalDbMetadataKey::LastScannedBaseLayerBlockHeight)?
+=======
+        let tx = self.global_db.create_transaction()?;
+        let metadata = self.global_db.metadata(&tx);
+
+        self.last_scanned_hash = metadata
+            .get_metadata(MetadataKey::BaseLayerScannerLastScannedBlockHash)?
+            .map(TryInto::try_into)
+            .transpose()?;
+        self.last_scanned_height = metadata
+            .get_metadata(MetadataKey::BaseLayerScannerLastScannedBlockHeight)?
+>>>>>>> development
             .map(|data| {
                 if data.len() == 8 {
                     let mut buf = [0u8; 8];
@@ -139,6 +248,7 @@ impl BaseLayerScanner {
         Ok(())
     }
 
+<<<<<<< HEAD
     async fn scan_for_new_templates(
         &mut self,
         tip: &BaseLayerMetadata,
@@ -181,6 +291,185 @@ impl BaseLayerScanner {
         )?;
         self.last_scanned_hash = Some(tip.tip_hash);
         self.last_scanned_height = tip.height_of_longest_chain;
+=======
+    async fn scan_blockchain(&mut self) -> Result<(), BaseLayerScannerError> {
+        // fetch the new base layer info since the previous scan
+        let tip = self.base_node_client.get_tip_info().await?;
+        match self.get_blockchain_progression(&tip).await? {
+            BlockchainProgression::Progressed => {
+                info!(
+                    target: LOG_TARGET,
+                    "⛓️ Blockchain has progressed to height {}. We last scanned {}. Scanning for new side-chain UTXOs.",
+                    tip.height_of_longest_chain,
+                    self.last_scanned_height
+                );
+                self.sync_blockchain().await?;
+            },
+            BlockchainProgression::Reorged => {
+                warn!(
+                    target: LOG_TARGET,
+                    "⚠️ Base layer reorg detected. Rescanning from genesis."
+                );
+                // TODO: we need to figure out where the fork happened, and delete data after the fork.
+                self.last_scanned_hash = None;
+                self.last_scanned_height = 0;
+                self.sync_blockchain().await?;
+            },
+            BlockchainProgression::NoProgress => {
+                debug!(target: LOG_TARGET, "No new blocks to scan.");
+            },
+        }
+
+        Ok(())
+    }
+
+    async fn get_blockchain_progression(
+        &mut self,
+        tip: &BaseLayerMetadata,
+    ) -> Result<BlockchainProgression, BaseLayerScannerError> {
+        match self.last_scanned_hash {
+            Some(hash) if hash == tip.tip_hash => Ok(BlockchainProgression::NoProgress),
+            Some(hash) => {
+                let header = self.base_node_client.get_header_by_hash(hash).await.optional()?;
+                if header.is_some() {
+                    Ok(BlockchainProgression::Progressed)
+                } else {
+                    Ok(BlockchainProgression::Reorged)
+                }
+            },
+            None => Ok(BlockchainProgression::Progressed),
+        }
+    }
+
+    async fn sync_blockchain(&mut self) -> Result<(), BaseLayerScannerError> {
+        let start_scan_height = self.last_scanned_height;
+        let mut current_hash = self.last_scanned_hash;
+        // TODO: we need to scan ending a few blocks back to mitigate for reorgs
+        let tip = self.base_node_client.get_tip_info().await?;
+        if tip.height_of_longest_chain == 0 {
+            return Ok(());
+        }
+        let end_height = tip.height_of_longest_chain;
+
+        for current_height in start_scan_height..=end_height {
+            let utxos = self
+                .base_node_client
+                .get_sidechain_utxos(current_hash, 1)
+                .await?
+                .pop()
+                .ok_or_else(|| {
+                    BaseLayerScannerError::InvalidSideChainUtxoResponse(format!(
+                        "Base layer returned empty response for height {}",
+                        current_height
+                    ))
+                })?;
+            let block_info = utxos.block_info;
+            // TODO: Because we dont know the next hash when we're done scanning to the tip, we need to load the
+            //       previous scanned block again to get it.  This isn't ideal, but won't be an issue when we scan a few
+            //       blocks back.
+            if self.last_scanned_hash.map(|h| h == block_info.hash).unwrap_or(false) {
+                if let Some(hash) = block_info.next_block_hash {
+                    current_hash = Some(hash);
+                    continue;
+                }
+                break;
+            }
+            info!(
+                target: LOG_TARGET,
+                "⛓️ Scanning base layer block {} of {}", block_info.height, end_height
+            );
+            for output in utxos.outputs {
+                let output_hash = output.hash();
+                let sidechain_feature = output.features.sidechain_feature.ok_or_else(|| {
+                    BaseLayerScannerError::InvalidSideChainUtxoResponse(
+                        "Validator node registration output must have a sidechain features".to_string(),
+                    )
+                })?;
+                match sidechain_feature {
+                    SideChainFeature::ValidatorNodeRegistration(reg) => {
+                        self.register_validator_node_registration(current_height, reg).await?;
+                    },
+                    SideChainFeature::TemplateRegistration(reg) => {
+                        self.register_code_template_registration((*output_hash).into(), reg, &block_info)
+                            .await?;
+                    },
+                }
+            }
+
+            self.epoch_manager.update_epoch(block_info.height).await?;
+
+            self.set_last_scanned_block(block_info.height, block_info.hash)?;
+            match block_info.next_block_hash {
+                Some(next_hash) => {
+                    current_hash = Some(next_hash);
+                },
+                None => {
+                    info!(
+                        target: LOG_TARGET,
+                        "⛓️ No more blocks to scan. Last scanned block height: {}", block_info.height
+                    );
+                    if block_info.height != end_height {
+                        return Err(BaseLayerScannerError::InvalidSideChainUtxoResponse(format!(
+                            "Expected to scan to height {}, but got to height {}",
+                            end_height, block_info.height
+                        )));
+                    }
+                    break;
+                },
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn register_validator_node_registration(
+        &mut self,
+        height: u64,
+        _registration: ValidatorNodeRegistration,
+    ) -> Result<(), BaseLayerScannerError> {
+        // TODO: add to VN registry
+        info!(
+            target: LOG_TARGET,
+            "⛓️ Validator node registration UTXO found at height {}", height,
+        );
+        // todo: maybe register? idk
+        // self.epoch_manager.update_epoch(height).await?;
+        Ok(())
+    }
+
+    async fn register_code_template_registration(
+        &mut self,
+        template_address: TemplateAddress,
+        registration: CodeTemplateRegistration,
+        block_info: &BlockInfo,
+    ) -> Result<(), BaseLayerScannerError> {
+        info!(
+            target: LOG_TARGET,
+            "🌠 new template found with address {} at height {}", template_address, block_info.height
+        );
+        let template = TemplateRegistration {
+            template_address,
+            registration,
+            mined_height: block_info.height,
+            mined_hash: block_info.hash,
+        };
+        self.template_manager.add_template(template).await?;
+
+        Ok(())
+    }
+
+    fn set_last_scanned_block(&mut self, height: u64, hash: FixedHash) -> Result<(), BaseLayerScannerError> {
+        let tx = self.global_db.create_transaction()?;
+        let metadata = self.global_db.metadata(&tx);
+        metadata.set_metadata(MetadataKey::BaseLayerScannerLastScannedBlockHash, hash.as_bytes())?;
+        metadata.set_metadata(
+            MetadataKey::BaseLayerScannerLastScannedBlockHeight,
+            &height.to_le_bytes(),
+        )?;
+        self.global_db.commit(tx)?;
+        self.last_scanned_hash = Some(hash);
+        self.last_scanned_height = height;
+>>>>>>> development
         Ok(())
     }
 }
@@ -190,11 +479,16 @@ pub enum BaseLayerScannerError {
     #[error(transparent)]
     FixedHashSizeError(#[from] FixedHashSizeError),
     #[error("Storage error: {0}")]
+<<<<<<< HEAD
     StorageError(#[from] StorageError),
+=======
+    SqliteStorageError(#[from] SqliteStorageError),
+>>>>>>> development
     #[error("DigitalAsset error: {0}")]
     DigitalAssetError(#[from] DigitalAssetError),
     #[error("Data corruption: {details}")]
     DataCorruption { details: String },
+<<<<<<< HEAD
 }
 
 // macro_rules! some_or_continue {
@@ -205,3 +499,23 @@ pub enum BaseLayerScannerError {
 // }
 // };
 // }
+=======
+    #[error("Epoch manager error: {0}")]
+    EpochManagerError(#[from] EpochManagerError),
+    #[error("Template manager error: {0}")]
+    TemplateManagerError(#[from] TemplateManagerError),
+    #[error("Base node client error: {0}")]
+    BaseNodeError(#[from] BaseNodeError),
+    #[error("Invalid side chain utxo response: {0}")]
+    InvalidSideChainUtxoResponse(String),
+}
+
+enum BlockchainProgression {
+    /// The blockchain has progressed since the last scan
+    Progressed,
+    /// Reorg was detected
+    Reorged,
+    /// The blockchain has not progressed since the last scan
+    NoProgress,
+}
+>>>>>>> development

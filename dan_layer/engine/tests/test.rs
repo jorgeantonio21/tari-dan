@@ -1,39 +1,36 @@
-//  Copyright 2022. The Tari Project
+//   Copyright 2022. The Tari Project
 //
-//  Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
-//  following conditions are met:
+//   Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+//   following conditions are met:
 //
-//  1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
-//  disclaimer.
+//   1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+//   disclaimer.
 //
-//  2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the
-//  following disclaimer in the documentation and/or other materials provided with the distribution.
+//   2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the
+//   following disclaimer in the documentation and/or other materials provided with the distribution.
 //
-//  3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote
-//  products derived from this software without specific prior written permission.
+//   3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote
+//   products derived from this software without specific prior written permission.
 //
-//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
-//  INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-//  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-//  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-//  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-//  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-//  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-mod tooling;
+//   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+//   INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+//   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+//   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+//   WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+//   USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use tari_dan_engine::{
-    instruction::Instruction,
-    packager::{Package, PackageError},
-    runtime::{RuntimeInterfaceImpl, StateTracker},
-    state_store::{memory::MemoryStateStore, AtomicDb, StateReader},
+    packager::{PackageError, TemplateModuleLoader},
+    state_store::{AtomicDb, StateReader},
     wasm::{compile::compile_template, WasmExecutionError},
 };
+use tari_engine_types::instruction::Instruction;
 use tari_template_lib::{
     args,
     models::{Amount, ComponentAddress, ComponentInstance},
 };
-use tooling::TemplateTest;
+use tari_template_test_tooling::TemplateTest;
 
 #[test]
 fn test_hello_world() {
@@ -50,7 +47,13 @@ fn test_state() {
 
     // constructor
     let component_address1: ComponentAddress = template_test.call_function("State", "new", args![]);
-    template_test.assert_calls(&["emit_log", "create_component", "set_last_instruction_output"]);
+    template_test.assert_calls(&[
+        "set_current_runtime_state",
+        "emit_log",
+        "create_component",
+        "set_last_instruction_output",
+        "finalize",
+    ]);
     template_test.clear_calls();
 
     let component_address2: ComponentAddress = template_test.call_function("State", "new", args![]);
@@ -63,6 +66,7 @@ fn test_state() {
         .unwrap()
         .expect("component1 not found");
     assert_eq!(component.module_name, "State");
+
     let component: ComponentInstance = store
         .read_access()
         .unwrap()
@@ -121,19 +125,25 @@ fn test_composed() {
 
 #[test]
 fn test_dodgy_template() {
-    let wasm = compile_template("tests/templates/buggy", &["call_engine_in_abi"]).unwrap();
-    let err = Package::builder().add_wasm_module(wasm).build().unwrap_err();
+    let err = compile_template("tests/templates/buggy", &["call_engine_in_abi"])
+        .unwrap()
+        .load_template()
+        .unwrap_err();
     assert!(matches!(err, PackageError::TemplateCalledEngineDuringInitialization));
 
-    let wasm = compile_template("tests/templates/buggy", &["return_null_abi"]).unwrap();
-    let err = Package::builder().add_wasm_module(wasm).build().unwrap_err();
+    let err = compile_template("tests/templates/buggy", &["return_null_abi"])
+        .unwrap()
+        .load_template()
+        .unwrap_err();
     assert!(matches!(
         err,
         PackageError::WasmModuleError(WasmExecutionError::AbiDecodeError)
     ));
 
-    let wasm = compile_template("tests/templates/buggy", &["unexpected_export_function"]).unwrap();
-    let err = Package::builder().add_wasm_module(wasm).build().unwrap_err();
+    let err = compile_template("tests/templates/buggy", &["unexpected_export_function"])
+        .unwrap()
+        .load_template()
+        .unwrap_err();
     assert!(matches!(
         err,
         PackageError::WasmModuleError(WasmExecutionError::UnexpectedAbiFunction { .. })
@@ -142,10 +152,7 @@ fn test_dodgy_template() {
 
 #[test]
 fn test_erc20() {
-    let state_db = MemoryStateStore::default();
-    let tracker = StateTracker::new(state_db, Default::default());
-    let template_test =
-        TemplateTest::with_runtime_interface(vec!["tests/templates/erc20"], RuntimeInterfaceImpl::new(tracker));
+    let template_test = TemplateTest::new(vec!["tests/templates/erc20"]);
 
     let initial_supply = Amount(1_000_000_000_000);
     let owner_address: ComponentAddress =
@@ -155,7 +162,7 @@ fn test_erc20() {
 
     let result = template_test.execute(vec![
         Instruction::CallMethod {
-            package_address: template_test.package_address(),
+            template_address: template_test.get_template_address("FungibleAccount"),
             component_address: owner_address,
             method: "withdraw".to_string(),
             args: args![Amount(100)],
@@ -164,19 +171,19 @@ fn test_erc20() {
             key: b"foo_bucket".to_vec(),
         },
         Instruction::CallMethod {
-            package_address: template_test.package_address(),
+            template_address: template_test.get_template_address("FungibleAccount"),
             component_address: receiver_address,
             method: "deposit".to_string(),
             args: args![Workspace(b"foo_bucket")],
         },
         Instruction::CallMethod {
-            package_address: template_test.package_address(),
+            template_address: template_test.get_template_address("FungibleAccount"),
             component_address: owner_address,
             method: "balance".to_string(),
             args: args![],
         },
         Instruction::CallMethod {
-            package_address: template_test.package_address(),
+            template_address: template_test.get_template_address("FungibleAccount"),
             component_address: receiver_address,
             method: "balance".to_string(),
             args: args![],

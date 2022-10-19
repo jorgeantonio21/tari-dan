@@ -20,21 +20,22 @@
 //  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use tari_dan_engine::state::StateDbBackendAdapter;
+use tari_dan_storage::global::GlobalDbAdapter;
 
-use super::mempool::service::MempoolService;
+use super::{mempool::service::MempoolService, WalletClient};
 use crate::{
     models::{domain_events::ConsensusWorkerDomainEvent, Payload},
     services::{
-        infrastructure_services::{InboundConnectionService, NodeAddressable, OutboundService},
+        infrastructure_services::{NodeAddressable, OutboundService},
         AssetProxy,
         BaseNodeClient,
         EventsPublisher,
         PayloadProcessor,
+        PeerProvider,
         SigningService,
         ValidatorNodeClientFactory,
     },
-    storage::{chain::ChainDbBackendAdapter, global::GlobalDbBackendAdapter, DbFactory},
+    storage::DbFactory,
 };
 
 /// A trait to describe a specific configuration of services. This type allows other services to
@@ -44,20 +45,16 @@ pub trait ServiceSpecification: Default + Clone {
     type Addr: NodeAddressable;
     type AssetProxy: AssetProxy + Clone;
     type BaseNodeClient: BaseNodeClient + Clone;
-    type ChainDbBackendAdapter: ChainDbBackendAdapter;
-    type DbFactory: DbFactory<
-            StateDbBackendAdapter = Self::StateDbBackendAdapter,
-            ChainDbBackendAdapter = Self::ChainDbBackendAdapter,
-            GlobalDbBackendAdapter = Self::GlobalDbAdapter,
-        > + Clone;
+    type DbFactory: DbFactory<GlobalDbAdapter = Self::GlobalDbAdapter> + Clone;
     type EventsPublisher: EventsPublisher<ConsensusWorkerDomainEvent>;
-    type GlobalDbAdapter: GlobalDbBackendAdapter;
-    type InboundConnectionService: InboundConnectionService<Addr = Self::Addr, Payload = Self::Payload>;
+    type GlobalDbAdapter: GlobalDbAdapter;
+    // type InboundConnectionService: InboundConnectionService<Addr = Self::Addr, Payload = Self::Payload>;
     type MempoolService: MempoolService + Clone;
     type OutboundService: OutboundService<Addr = Self::Addr, Payload = Self::Payload>;
+    type PeerProvider: PeerProvider<Addr = Self::Addr>;
     type Payload: Payload;
     type PayloadProcessor: PayloadProcessor<Self::Payload>;
     type SigningService: SigningService;
-    type StateDbBackendAdapter: StateDbBackendAdapter;
     type ValidatorNodeClientFactory: ValidatorNodeClientFactory<Addr = Self::Addr> + Clone;
+    type WalletClient: WalletClient;
 }

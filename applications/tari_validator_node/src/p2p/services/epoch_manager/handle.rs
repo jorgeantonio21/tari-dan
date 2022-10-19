@@ -22,12 +22,12 @@
 
 use async_trait::async_trait;
 use tari_comms::types::CommsPublicKey;
-use tari_dan_common_types::ShardId;
+use tari_dan_common_types::{Epoch, ShardId};
 use tari_dan_core::{
-    models::{Committee, Epoch},
-    services::epoch_manager::EpochManager,
+    models::Committee,
+    services::epoch_manager::{EpochManager, EpochManagerError, ShardCommitteeAllocation},
 };
-use tokio::sync::{mpsc::Sender, oneshot, oneshot::channel};
+use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::p2p::services::epoch_manager::epoch_manager_service::{EpochManagerRequest, EpochManagerResponse};
 
@@ -35,7 +35,7 @@ use crate::p2p::services::epoch_manager::epoch_manager_service::{EpochManagerReq
 pub struct EpochManagerHandle {
     tx_request: Sender<(
         EpochManagerRequest,
-        oneshot::Sender<Result<EpochManagerResponse, String>>,
+        oneshot::Sender<Result<EpochManagerResponse, EpochManagerError>>,
     )>,
 }
 
@@ -43,48 +43,108 @@ impl EpochManagerHandle {
     pub fn new(
         tx_request: Sender<(
             EpochManagerRequest,
-            oneshot::Sender<Result<EpochManagerResponse, String>>,
+            oneshot::Sender<Result<EpochManagerResponse, EpochManagerError>>,
         )>,
     ) -> Self {
         Self { tx_request }
     }
+
+    pub async fn update_epoch(&self, height: u64) -> Result<(), EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((EpochManagerRequest::UpdateEpoch { height }, tx))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+        let _result = rx.await.map_err(|_| EpochManagerError::ReceiveError)??;
+        Ok(())
+    }
 }
 #[async_trait]
 impl EpochManager<CommsPublicKey> for EpochManagerHandle {
-    async fn current_epoch(&self) -> Epoch {
-        let (tx, rx) = channel();
-        let _ignore = self.tx_request.send((EpochManagerRequest::CurrentEpoch, tx)).await;
-        let res = rx.await.expect("Error receiving");
-        match res {
-            Ok(EpochManagerResponse::CurrentEpoch { epoch }) => epoch,
-            Err(e) => {
-                panic!("erro: {}", e)
-            },
+    async fn current_epoch(&self) -> Result<Epoch, EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((EpochManagerRequest::CurrentEpoch, tx))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+        match rx.await.map_err(|_| EpochManagerError::ReceiveError)?? {
+            EpochManagerResponse::CurrentEpoch { epoch } => Ok(epoch),
+            _ => Err(EpochManagerError::UnexpectedResponse),
         }
     }
 
-    async fn is_epoch_valid(&self, _epoch: Epoch) -> bool {
-        todo!()
+    async fn is_epoch_valid(&self, epoch: Epoch) -> Result<bool, EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((EpochManagerRequest::IsEpochValid { epoch }, tx))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+        match rx.await.map_err(|_| EpochManagerError::ReceiveError)?? {
+            EpochManagerResponse::IsEpochValid { is_valid } => Ok(is_valid),
+            _ => Err(EpochManagerError::UnexpectedResponse),
+        }
     }
 
     async fn get_committees(
         &self,
-        _epoch: Epoch,
-        _shards: &[ShardId],
-    ) -> Result<Vec<(ShardId, Option<Committee<CommsPublicKey>>)>, String> {
-        todo!()
+        epoch: Epoch,
+        shards: &[ShardId],
+    ) -> Result<Vec<ShardCommitteeAllocation<CommsPublicKey>>, EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((
+                EpochManagerRequest::GetCommittees {
+                    epoch,
+                    shards: shards.to_vec(),
+                },
+                tx,
+            ))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+        match rx.await.map_err(|_| EpochManagerError::ReceiveError)?? {
+            EpochManagerResponse::GetCommittees { committees } => Ok(committees),
+            _ => Err(EpochManagerError::UnexpectedResponse),
+        }
     }
 
-    async fn get_committee(&self, _epoch: Epoch, _shard: ShardId) -> Result<Committee<CommsPublicKey>, String> {
-        todo!()
-    }
-
-    async fn get_shards(
+    async fn get_committee(
         &self,
-        _epoch: Epoch,
-        _addr: &CommsPublicKey,
-        _available_shards: &[ShardId],
-    ) -> Result<Vec<ShardId>, String> {
-        todo!()
+        epoch: Epoch,
+        shard: ShardId,
+    ) -> Result<Committee<CommsPublicKey>, EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((EpochManagerRequest::GetCommittee { epoch, shard }, tx))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+        match rx.await.map_err(|_| EpochManagerError::ReceiveError)?? {
+            EpochManagerResponse::GetCommittee { committee } => Ok(committee),
+            _ => Err(EpochManagerError::UnexpectedResponse),
+        }
+    }
+
+    async fn filter_to_local_shards(
+        &self,
+        epoch: Epoch,
+        for_addr: &CommsPublicKey,
+        available_shards: &[ShardId],
+    ) -> Result<Vec<ShardId>, EpochManagerError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx_request
+            .send((
+                EpochManagerRequest::FilterToLocalShards {
+                    epoch,
+                    for_addr: for_addr.clone(),
+                    available_shards: available_shards.to_vec(),
+                },
+                tx,
+            ))
+            .await
+            .map_err(|_| EpochManagerError::SendError)?;
+
+        match rx.await.map_err(|_| EpochManagerError::ReceiveError)?? {
+            EpochManagerResponse::FilterToLocalShards { shards } => Ok(shards),
+            _ => Err(EpochManagerError::UnexpectedResponse),
+        }
     }
 }

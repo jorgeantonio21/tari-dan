@@ -23,29 +23,57 @@
 use std::{collections::HashMap, ops::Range};
 
 use async_trait::async_trait;
-use tari_dan_common_types::ShardId;
+use tari_dan_common_types::{Epoch, ShardId};
+use thiserror::Error;
 
 use crate::{
-    models::{Committee, Epoch},
-    services::infrastructure_services::NodeAddressable,
+    models::Committee,
+    services::{base_node_error::BaseNodeError, infrastructure_services::NodeAddressable},
+    storage::StorageError,
 };
 
+pub struct ShardCommitteeAllocation<TAddr: NodeAddressable> {
+    pub shard_id: ShardId,
+    pub committee: Option<Committee<TAddr>>,
+}
+
+#[derive(Error, Debug)]
+pub enum EpochManagerError {
+    #[error("Could not receive from channel")]
+    ReceiveError,
+    #[error("Could not send to channel")]
+    SendError,
+    #[error("Base node errored: {0}")]
+    BaseNodeError(#[from] BaseNodeError),
+    #[error("No epoch found {0:?}")]
+    NoEpochFound(Epoch),
+    #[error("No committee found for shard {0:?}")]
+    NoCommitteeFound(ShardId),
+    #[error("Unexpected response")]
+    UnexpectedResponse,
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
+}
+
 #[async_trait]
+// TODO: Rename to reflect that it's a read only interface (e.g. EpochReader, EpochQuery)
 pub trait EpochManager<TAddr: NodeAddressable>: Clone {
-    async fn current_epoch(&self) -> Epoch;
-    async fn is_epoch_valid(&self, epoch: Epoch) -> bool;
+    async fn current_epoch(&self) -> Result<Epoch, EpochManagerError>;
+    async fn is_epoch_valid(&self, epoch: Epoch) -> Result<bool, EpochManagerError>;
     async fn get_committees(
         &self,
         epoch: Epoch,
         shards: &[ShardId],
-    ) -> Result<Vec<(ShardId, Option<Committee<TAddr>>)>, String>;
-    async fn get_committee(&self, epoch: Epoch, shard: ShardId) -> Result<Committee<TAddr>, String>;
-    async fn get_shards(
+    ) -> Result<Vec<ShardCommitteeAllocation<TAddr>>, EpochManagerError>;
+
+    async fn get_committee(&self, epoch: Epoch, shard: ShardId) -> Result<Committee<TAddr>, EpochManagerError>;
+    // TODO: Get a better name
+    async fn filter_to_local_shards(
         &self,
         epoch: Epoch,
-        addr: &TAddr,
+        for_addr: &TAddr,
         available_shards: &[ShardId],
-    ) -> Result<Vec<ShardId>, String>;
+    ) -> Result<Vec<ShardId>, EpochManagerError>;
 }
 
 #[derive(Debug, Clone)]
@@ -83,20 +111,20 @@ impl<TAddr: NodeAddressable> RangeEpochManager<TAddr> {
 
 #[async_trait]
 impl<TAddr: NodeAddressable> EpochManager<TAddr> for RangeEpochManager<TAddr> {
-    async fn current_epoch(&self) -> Epoch {
-        self.current_epoch
+    async fn current_epoch(&self) -> Result<Epoch, EpochManagerError> {
+        Ok(self.current_epoch)
     }
 
-    async fn is_epoch_valid(&self, epoch: Epoch) -> bool {
-        self.current_epoch == epoch
+    async fn is_epoch_valid(&self, epoch: Epoch) -> Result<bool, EpochManagerError> {
+        Ok(self.current_epoch == epoch)
     }
 
     async fn get_committees(
         &self,
         epoch: Epoch,
         shards: &[ShardId],
-    ) -> Result<Vec<(ShardId, Option<Committee<TAddr>>)>, String> {
-        let epoch = self.epochs.get(&epoch).ok_or("No value for that epoch")?;
+    ) -> Result<Vec<ShardCommitteeAllocation<TAddr>>, EpochManagerError> {
+        let epoch = self.epochs.get(&epoch).ok_or(EpochManagerError::NoEpochFound(epoch))?;
         let mut result = vec![];
         for shard in shards {
             let mut found_committee = None;
@@ -106,29 +134,32 @@ impl<TAddr: NodeAddressable> EpochManager<TAddr> for RangeEpochManager<TAddr> {
                     break;
                 }
             }
-            result.push((*shard, found_committee.clone()));
+            result.push(ShardCommitteeAllocation {
+                shard_id: *shard,
+                committee: found_committee.clone(),
+            });
         }
 
         Ok(result)
     }
 
-    async fn get_committee(&self, epoch: Epoch, shard: ShardId) -> Result<Committee<TAddr>, String> {
-        let epoch = self.epochs.get(&epoch).ok_or("No value for that epoch")?;
+    async fn get_committee(&self, epoch: Epoch, shard: ShardId) -> Result<Committee<TAddr>, EpochManagerError> {
+        let epoch = self.epochs.get(&epoch).ok_or(EpochManagerError::NoEpochFound(epoch))?;
         for (range, committee) in epoch {
             if range.contains(&shard) {
                 return Ok(committee.clone());
             }
         }
-        Err("Could not find a committee for that shard".to_string())
+        Err(EpochManagerError::NoCommitteeFound(shard))
     }
 
-    async fn get_shards(
+    async fn filter_to_local_shards(
         &self,
         epoch: Epoch,
         addr: &TAddr,
         available_shards: &[ShardId],
-    ) -> Result<Vec<ShardId>, String> {
-        let epoch = self.epochs.get(&epoch).ok_or("No value for that epoch")?;
+    ) -> Result<Vec<ShardId>, EpochManagerError> {
+        let epoch = self.epochs.get(&epoch).ok_or(EpochManagerError::NoEpochFound(epoch))?;
         let mut result = vec![];
         for (range, committee) in epoch {
             for shard in available_shards {

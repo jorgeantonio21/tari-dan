@@ -21,6 +21,7 @@
 //  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use prost::DecodeError;
+use tari_common_types::types::FixedHashSizeError;
 use tari_comms_dht::outbound::DhtOutboundError;
 use tari_dan_engine::state::error::StateStorageError;
 use thiserror::Error;
@@ -35,8 +36,7 @@ pub enum DigitalAssetError {
     _MissingArgument { argument_name: String, position: usize },
     #[error("Invalid sig, TODO: fill in deets")]
     InvalidSignature,
-    #[error("Peer sent an invalid message: {0}")]
-    InvalidPeerMessage(String),
+
     #[error("Storage error: {0}")]
     StorageError(#[from] StorageError),
     #[error("Metadata was malformed: {0}")]
@@ -85,8 +85,6 @@ pub enum DigitalAssetError {
     PreparePhaseCertificateDoesNotExtendNode,
     #[error("Node not safe")]
     PreparePhaseNodeNotSafe,
-    #[error("Unsupported template method {name}")]
-    TemplateUnsupportedMethod { name: String },
     #[error("Connection error: {0}")]
     GrpcConnection(#[from] tonic::transport::Error),
     #[error("GRPC error: {0}")]
@@ -101,6 +99,8 @@ pub enum DigitalAssetError {
     InvalidCommitteePublicKeyHex,
     #[error("State storage error:{0}")]
     StateStorageError(#[from] StateStorageError),
+    #[error("Hash size error: {0}")]
+    HashSizeError(#[from] FixedHashSizeError),
 }
 
 impl From<lmdb_zero::Error> for DigitalAssetError {

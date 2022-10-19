@@ -31,11 +31,11 @@ use std::{
 use tari_template_abi::{Decode, Encode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "json", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct Hash(#[cfg_attr(feature = "json", serde(with = "hex"))] [u8; 32]);
 
 impl Hash {
-    pub fn into_inner(self) -> [u8; 32] {
+    pub fn into_array(self) -> [u8; 32] {
         self.0
     }
 
@@ -65,15 +65,22 @@ impl From<[u8; 32]> for Hash {
 }
 
 impl TryFrom<&[u8]> for Hash {
-    type Error = String;
+    type Error = HashParseError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         if value.len() != 32 {
-            return Err("Hash must be 32 bytes".to_string());
+            return Err(HashParseError);
         }
         let mut hash = [0u8; 32];
         hash.copy_from_slice(value);
         Ok(Hash(hash))
+    }
+}
+impl TryFrom<Vec<u8>> for Hash {
+    type Error = HashParseError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        Hash::try_from(value.as_slice())
     }
 }
 
